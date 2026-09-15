@@ -21,16 +21,19 @@ class ApiTest < Minitest::Test
   end
 
   def setup
-    database[:event_receipts].delete
-    database[:events].delete
-    database[:credential_data_sets].delete
-    database[:advertiser_credentials].delete
+    database[Sequel.qualify(:ecapi, :event_receipts)].delete
+    database[Sequel.qualify(:ecapi, :events)].delete
+    database[Sequel.qualify(:ecapi, :credential_data_sets)].delete
+    database[Sequel.qualify(:ecapi, :advertiser_credentials)].delete
 
-    credential_id = database[:advertiser_credentials].insert(
+    credential_id = database[Sequel.qualify(:ecapi, :advertiser_credentials)].insert(
       advertiser_id: "adv_7c21",
       credential_digest: Digest::SHA256.hexdigest("test-token")
     )
-    database[:credential_data_sets].insert(credential_id: credential_id, data_set_id: "adv_7c21")
+    database[Sequel.qualify(:ecapi, :credential_data_sets)].insert(
+      credential_id: credential_id,
+      data_set_id: "adv_7c21"
+    )
   end
 
   def post_event(payload, token: "test-token")
