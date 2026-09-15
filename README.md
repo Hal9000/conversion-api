@@ -137,6 +137,10 @@ The test suite applies the production migrations before running and deletes
 test rows between cases. Do not point `DATABASE_URL` at a shared, development,
 or production database when running tests.
 
+Pull requests run the same suite against an ephemeral PostgreSQL 16 GitHub
+Actions service container. CI does not require a database to be running in a
+Cloud Agent.
+
 ## Delivery order
 
 1. Define database migrations and the advertiser credential model.
