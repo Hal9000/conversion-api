@@ -58,7 +58,7 @@ module Ecapi
     def authorized?(credential, data_set_id)
       table(:credential_data_sets)
         .where(credential_id: credential[:id], data_set_id: data_set_id)
-        .exist?
+        .exists
     end
 
     def receive(credential, events)
