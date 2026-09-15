@@ -1,8 +1,0 @@
-.env
-.env.*
-!.env.example
-*.log
-tmp/
-.bundle/
-vendor/bundle/
-.ruby-lsp/
