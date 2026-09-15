@@ -79,7 +79,7 @@ module Ecapi
     end
 
     def ingest_event(credential, event, request_id)
-      lock_key = "#{event.fetch("data_set_id")}\0#{event.fetch("id")}"
+      lock_key = Digest::SHA256.hexdigest("#{event.fetch("data_set_id")}\0#{event.fetch("id")}")
       @db.fetch("SELECT pg_advisory_xact_lock(hashtext(?))", lock_key).all
 
       event_table = table(:events)
