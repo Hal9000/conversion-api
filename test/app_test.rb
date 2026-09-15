@@ -3,6 +3,25 @@
 require_relative "test_helper"
 
 class EventReceiverTest < ApiTest
+  def test_production_database_url_requires_certificate_verification
+    previous_environment = ENV["RACK_ENV"]
+    previous_url = ENV["DATABASE_URL"]
+    ENV["RACK_ENV"] = "production"
+    ENV["DATABASE_URL"] = "postgres://postgres:postgres@127.0.0.1:5432/ecapi_test?sslmode=require"
+
+    assert_raises(Ecapi::DatabaseConfigurationError) { Ecapi::DatabaseUrl.fetch }
+  ensure
+    ENV["RACK_ENV"] = previous_environment
+    ENV["DATABASE_URL"] = previous_url
+  end
+
+  def test_health_requires_a_database_connection
+    get "/health"
+
+    assert_equal 200, last_response.status
+    assert_equal({ "status" => "ok", "database" => "ok" }, JSON.parse(last_response.body))
+  end
+
   def test_persists_an_authenticated_purchase
     post_event(purchase)
 
