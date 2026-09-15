@@ -1,0 +1,39 @@
+name: Test
+
+on:
+  pull_request:
+  push:
+    branches:
+      - master
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: ecapi_test
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_USER: postgres
+        options: >-
+          --health-cmd "pg_isready -U postgres -d ecapi_test"
+          --health-interval 1s
+          --health-timeout 5s
+          --health-retries 30
+        ports:
+          - 5432:5432
+    env:
+      DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5432/ecapi_test
+
+    steps:
+      - uses: actions/checkout@v5
+      - uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: "3.2"
+          bundler-cache: true
+      - run: bundle exec rake test
+      - run: ruby -c lib/ecapi.rb
+      - run: ruby -c db/migrate.rb
+      - run: bash -n ship
+      - run: bash -n scripts/cloud-agent-start.sh
