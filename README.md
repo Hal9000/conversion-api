@@ -63,6 +63,10 @@ The receiver must reject malformed payloads, unauthenticated requests, and
 events whose `data_set_id` does not belong to the credential. It must return a
 stable request/result identifier so senders can safely retry.
 
+V0 limits a request body to 1 MiB and a batch to 100 events. Validation rejects
+the complete batch before persisting any event; error details identify the
+zero-based event index that failed.
+
 ## Authentication and tenancy
 
 Each advertiser receives a distinct bearer credential. A credential is bound

@@ -196,6 +196,8 @@ module Ecapi
   end
 
   class Service
+    MAX_EVENTS = 100
+
     def initialize(repository = Repository.new)
       @repository = repository
     end
@@ -205,7 +207,8 @@ module Ecapi
       return [:unauthorized, { error: "Unauthorized" }] unless credential
 
       events = extract_events(payload)
-      events.each { |event| Validator.validate!(event) }
+      validation_errors = validate_events(events)
+      return [:bad_request, { error: "Bad Request", details: validation_errors }] unless validation_errors.empty?
       unless events.all? { |event| @repository.authorized?(credential, event.fetch("data_set_id")) }
         return [:forbidden, { error: "Forbidden", details: "credential is not authorized for data_set_id" }]
       end
@@ -218,15 +221,33 @@ module Ecapi
     private
 
     def extract_events(payload)
-      return payload if payload.is_a?(Array)
-      return payload.fetch("events") if payload.is_a?(Hash) && payload.key?("events")
-      return [payload] if payload.is_a?(Hash)
+      events = if payload.is_a?(Array)
+        payload
+      elsif payload.is_a?(Hash) && payload.key?("events")
+        payload.fetch("events")
+      elsif payload.is_a?(Hash)
+        [payload]
+      end
 
-      raise ValidationError, ["request body must contain an event or events array"]
+      raise ValidationError, ["request body must contain an event or events array"] unless events.is_a?(Array)
+      raise ValidationError, ["request may contain at most #{MAX_EVENTS} events"] if events.length > MAX_EVENTS
+
+      events
+    end
+
+    def validate_events(events)
+      events.each_with_index.flat_map do |event, index|
+        Validator.validate!(event)
+        []
+      rescue ValidationError => error
+        error.errors.map { |message| { index: index, error: message } }
+      end
     end
   end
 
   class App < Roda
+    MAX_REQUEST_BYTES = 1_048_576
+
     plugin :json
     plugin :halt
     plugin :all_verbs
@@ -243,8 +264,13 @@ module Ecapi
 
       r.on "v1" do
         r.post "events" do
+          if r.env["CONTENT_LENGTH"].to_i > MAX_REQUEST_BYTES
+            App.halt_json(r, 413, "Payload Too Large")
+          end
+
           body = r.body.read
           App.halt_json(r, 400, "Bad Request", ["request body is required"]) if body.strip.empty?
+          App.halt_json(r, 413, "Payload Too Large") if body.bytesize > MAX_REQUEST_BYTES
 
           payload = JSON.parse(body)
           status, response = Service.new.receive(App.bearer_token(r), payload)
