@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require "sequel"
+require "sequel/extensions/migration"
 
 database_url = ENV.fetch("DATABASE_URL") do
   abort "DATABASE_URL is required (for example: postgres://postgres:postgres@localhost:54329/ecapi_test)"
