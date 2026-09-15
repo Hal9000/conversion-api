@@ -5,6 +5,7 @@ require "json"
 require "rack/utils"
 require "roda"
 require "sequel"
+require "sequel/extensions/pg_json"
 require "securerandom"
 require "time"
 
