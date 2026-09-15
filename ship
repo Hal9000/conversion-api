@@ -11,7 +11,7 @@ set -euo pipefail
 MSG=""
 ASSUME_YES=0
 DRY_RUN=0
-AUTO_MERGE=1
+AUTO_MERGE=0
 WAIT=0
 TIMEOUT=900                # seconds to wait for the merge
 POLL=10                    # seconds between polls
@@ -29,7 +29,8 @@ Usage: ship [options]
   -n, --dry-run        show what would happen; touches nothing
   -w, --wait           block until the PR merges, then pull and clean up
       --timeout SECS   how long --wait waits before giving up (default 900)
-      --no-merge       don't enable auto-merge on the PR
+      --merge          enable auto-merge on the PR
+      --no-merge       don't enable auto-merge on the PR (default)
       --draft          open the PR as a draft (implies --no-merge)
   -h, --help           this text
 USAGE
@@ -45,6 +46,7 @@ while [ $# -gt 0 ]; do
     -n|--dry-run) DRY_RUN=1; shift ;;
     -w|--wait)    WAIT=1; shift ;;
     --timeout)    TIMEOUT="${2:-}"; shift 2 ;;
+    --merge)      AUTO_MERGE=1; shift ;;
     --no-merge)   AUTO_MERGE=0; shift ;;
     --draft)      DRAFT="--draft"; AUTO_MERGE=0; shift ;;
     -h|--help)    usage; exit 0 ;;
@@ -62,7 +64,7 @@ fi
 git rev-parse --git-dir >/dev/null 2>&1 || die "not inside a git repository"
 
 BASE="$(git symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/null | sed 's|^origin/||' || true)"
-[ -n "$BASE" ] || BASE=main
+[ -n "$BASE" ] || BASE=master
 git show-ref --verify --quiet "refs/heads/$BASE" \
   || die "base branch '$BASE' not found locally (try: git remote set-head origin -a)"
 
