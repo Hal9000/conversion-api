@@ -6,6 +6,7 @@ gem "pg"
 gem "rack"
 gem "roda"
 gem "sequel"
+gem "rake"
 
 group :test do
   gem "minitest"
