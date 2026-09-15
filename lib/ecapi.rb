@@ -156,20 +156,22 @@ module Ecapi
         { status: "ok" }
       end
 
-      r.post "v1", "events" do
-        body = r.body.read
-        App.halt_json(r, 400, "Bad Request", ["request body is required"]) if body.strip.empty?
+      r.on "v1" do
+        r.post "events" do
+          body = r.body.read
+          App.halt_json(r, 400, "Bad Request", ["request body is required"]) if body.strip.empty?
 
-        payload = JSON.parse(body)
-        status, response = Service.new.receive(App.bearer_token(r), payload)
-        case status
-        when :ok then response
-        when :bad_request then App.halt_json(r, 400, response.fetch(:error), response.fetch(:details))
-        when :unauthorized then App.halt_json(r, 401, response.fetch(:error))
-        when :forbidden then App.halt_json(r, 403, response.fetch(:error), response.fetch(:details))
+          payload = JSON.parse(body)
+          status, response = Service.new.receive(App.bearer_token(r), payload)
+          case status
+          when :ok then response
+          when :bad_request then App.halt_json(r, 400, response.fetch(:error), response.fetch(:details))
+          when :unauthorized then App.halt_json(r, 401, response.fetch(:error))
+          when :forbidden then App.halt_json(r, 403, response.fetch(:error), response.fetch(:details))
+          end
+        rescue JSON::ParserError
+          App.halt_json(r, 400, "Bad Request", ["request body must be valid JSON"])
         end
-      rescue JSON::ParserError
-        App.halt_json(r, 400, "Bad Request", ["request body must be valid JSON"])
       end
     end
 
