@@ -73,6 +73,22 @@ The receiver uses a dedicated, least-privilege database role. Production role
 provisioning and operational controls are documented in
 [docs/database-security.md](docs/database-security.md).
 
+### Operator credentials
+
+Adgentek operators create, rotate, or revoke advertiser credentials from a
+trusted administrative shell:
+
+```bash
+bin/ecapi-credentials create adv_7c21 adv_7c21
+bin/ecapi-credentials rotate 42
+bin/ecapi-credentials revoke 42
+```
+
+`create` and `rotate` print a plaintext token exactly once. Give it to the
+e-commerce store through an approved secret-sharing channel; the database
+retains only its SHA-256 digest. Do not run this command in application
+containers, CI logs, or untrusted shells.
+
 ## Storage and idempotency
 
 The receiver persists every accepted request and normalized event in durable

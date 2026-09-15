@@ -138,6 +138,63 @@ module Ecapi
     end
   end
 
+  class UnknownCredentialError < StandardError; end
+
+  class CredentialManager
+    def initialize(database_url = DatabaseUrl.fetch)
+      @db = Sequel.connect(database_url)
+    end
+
+    def create(advertiser_id, data_set_ids)
+      raise ArgumentError, "advertiser_id is required" if advertiser_id.to_s.empty?
+      raise ArgumentError, "at least one data_set_id is required" if data_set_ids.empty?
+
+      @db.transaction do
+        credential_id, token = create_credential(advertiser_id, data_set_ids)
+        { id: credential_id, token: token, data_set_ids: data_set_ids.uniq }
+      end
+    end
+
+    def rotate(credential_id)
+      @db.transaction do
+        credentials = table(:advertiser_credentials)
+        credential = credentials.where(id: credential_id).for_update.first
+        raise UnknownCredentialError, "credential #{credential_id} does not exist" unless credential
+
+        data_set_ids = table(:credential_data_sets)
+          .where(credential_id: credential_id)
+          .select_map(:data_set_id)
+        new_id, token = create_credential(credential.fetch(:advertiser_id), data_set_ids)
+        credentials.where(id: credential_id).update(active: false)
+
+        { id: new_id, token: token, data_set_ids: data_set_ids }
+      end
+    end
+
+    def revoke(credential_id)
+      updated = table(:advertiser_credentials).where(id: credential_id, active: true).update(active: false)
+      raise UnknownCredentialError, "active credential #{credential_id} does not exist" if updated.zero?
+    end
+
+    private
+
+    def create_credential(advertiser_id, data_set_ids)
+      token = SecureRandom.urlsafe_base64(32)
+      credential_id = table(:advertiser_credentials).insert(
+        advertiser_id: advertiser_id,
+        credential_digest: Digest::SHA256.hexdigest(token)
+      )
+      table(:credential_data_sets).multi_insert(
+        data_set_ids.uniq.map { |data_set_id| { credential_id: credential_id, data_set_id: data_set_id } }
+      )
+      [credential_id, token]
+    end
+
+    def table(name)
+      @db[Sequel.qualify(:ecapi, name)]
+    end
+  end
+
   class Service
     def initialize(repository = Repository.new)
       @repository = repository
