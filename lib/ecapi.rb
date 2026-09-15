@@ -5,6 +5,7 @@ require "json"
 require "rack/utils"
 require "roda"
 require "sequel"
+require "sequel/extensions/pg_json"
 require "securerandom"
 require "time"
 
@@ -56,9 +57,9 @@ module Ecapi
     end
 
     def authorized?(credential, data_set_id)
-      table(:credential_data_sets)
+      !table(:credential_data_sets)
         .where(credential_id: credential[:id], data_set_id: data_set_id)
-        .exist?
+        .empty?
     end
 
     def receive(credential, events)
@@ -79,7 +80,7 @@ module Ecapi
     end
 
     def ingest_event(credential, event, request_id)
-      lock_key = "#{event.fetch("data_set_id")}\0#{event.fetch("id")}"
+      lock_key = Digest::SHA256.hexdigest("#{event.fetch("data_set_id")}\0#{event.fetch("id")}")
       @db.fetch("SELECT pg_advisory_xact_lock(hashtext(?))", lock_key).all
 
       event_table = table(:events)
