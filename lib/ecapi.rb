@@ -50,23 +50,23 @@ module Ecapi
     def authenticate(token)
       return nil if token.nil? || token.empty?
 
-      @db[:advertiser_credentials]
+      table(:advertiser_credentials)
         .where(credential_digest: Digest::SHA256.hexdigest(token), active: true)
         .first
     end
 
     def authorized?(credential, data_set_id)
-      @db[:credential_data_sets]
+      table(:credential_data_sets)
         .where(credential_id: credential[:id], data_set_id: data_set_id)
         .exist?
     end
 
-    def receive(credential, events, raw_payload)
+    def receive(credential, events)
       request_id = SecureRandom.uuid
 
       @db.transaction do
         results = events.map do |event|
-          ingest_event(credential, event, request_id, raw_payload)
+          ingest_event(credential, event, request_id)
         end
         { request_id: request_id, events: results }
       end
@@ -74,11 +74,15 @@ module Ecapi
 
     private
 
-    def ingest_event(credential, event, request_id, raw_payload)
+    def table(name)
+      @db[Sequel.qualify(:ecapi, name)]
+    end
+
+    def ingest_event(credential, event, request_id)
       lock_key = "#{event.fetch("data_set_id")}\0#{event.fetch("id")}"
       @db.fetch("SELECT pg_advisory_xact_lock(hashtext(?))", lock_key).all
 
-      event_table = @db[:events]
+      event_table = table(:events)
       existing = event_table.where(
         data_set_id: event.fetch("data_set_id"),
         external_event_id: event.fetch("id")
@@ -99,12 +103,12 @@ module Ecapi
         )
       end
 
-      @db[:event_receipts].insert(
+      table(:event_receipts).insert(
         request_id: request_id,
         credential_id: credential.fetch(:id),
         event_id: event_id,
         outcome: outcome,
-        raw_payload: Sequel.pg_jsonb(raw_payload)
+        raw_payload: Sequel.pg_jsonb(event)
       )
 
       {
@@ -130,7 +134,7 @@ module Ecapi
         return [:forbidden, { error: "Forbidden", details: "credential is not authorized for data_set_id" }]
       end
 
-      [:ok, @repository.receive(credential, events, payload)]
+      [:ok, @repository.receive(credential, events)]
     rescue ValidationError => error
       [:bad_request, { error: "Bad Request", details: error.errors }]
     end

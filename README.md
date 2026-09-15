@@ -69,6 +69,10 @@ Each advertiser receives a distinct bearer credential. A credential is bound
 to one advertiser and its permitted `data_set_id` values. Authentication and
 dataset authorization happen before event persistence or attribution.
 
+The receiver uses a dedicated, least-privilege database role. Production role
+provisioning and operational controls are documented in
+[docs/database-security.md](docs/database-security.md).
+
 ## Storage and idempotency
 
 The receiver persists every accepted request and normalized event in durable

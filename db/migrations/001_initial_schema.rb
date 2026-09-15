@@ -2,7 +2,9 @@
 
 Sequel.migration do
   change do
-    create_table(:advertiser_credentials) do
+    create_schema(:ecapi)
+
+    create_table(Sequel.qualify(:ecapi, :advertiser_credentials)) do
       primary_key :id
       String :advertiser_id, null: false
       String :credential_digest, null: false, unique: true
@@ -10,13 +12,13 @@ Sequel.migration do
       DateTime :created_at, null: false, default: Sequel::CURRENT_TIMESTAMP
     end
 
-    create_table(:credential_data_sets) do
-      foreign_key :credential_id, :advertiser_credentials, null: false, on_delete: :cascade
+    create_table(Sequel.qualify(:ecapi, :credential_data_sets)) do
+      foreign_key :credential_id, Sequel.qualify(:ecapi, :advertiser_credentials), null: false, on_delete: :cascade
       String :data_set_id, null: false
       primary_key %i[credential_id data_set_id]
     end
 
-    create_table(:events) do
+    create_table(Sequel.qualify(:ecapi, :events)) do
       primary_key :id
       String :data_set_id, null: false
       String :external_event_id, null: false
@@ -28,11 +30,11 @@ Sequel.migration do
       unique %i[data_set_id external_event_id], name: :events_idempotency_key
     end
 
-    create_table(:event_receipts) do
+    create_table(Sequel.qualify(:ecapi, :event_receipts)) do
       primary_key :id
       String :request_id, null: false
-      foreign_key :credential_id, :advertiser_credentials, null: false
-      foreign_key :event_id, :events
+      foreign_key :credential_id, Sequel.qualify(:ecapi, :advertiser_credentials), null: false
+      foreign_key :event_id, Sequel.qualify(:ecapi, :events)
       String :outcome, null: false
       column :raw_payload, :jsonb, null: false
       DateTime :received_at, null: false, default: Sequel::CURRENT_TIMESTAMP
