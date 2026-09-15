@@ -1,0 +1,211 @@
+#!/usr/bin/env bash
+#
+# ship — turn the current working tree into a branch, commit and pull request.
+#
+# Do NOT commit before running this; ship does the committing.
+# Uncommitted changes are safe: there is no stash, and `git switch -c`
+# carries the working tree onto the new branch untouched.
+#
+set -euo pipefail
+
+MSG=""
+ASSUME_YES=0
+DRY_RUN=0
+AUTO_MERGE=1
+WAIT=0
+TIMEOUT=900                # seconds to wait for the merge
+POLL=10                    # seconds between polls
+DRAFT=""
+DIFF_LIMIT=100000          # bytes of diff handed to Claude
+BIG_FILE_KB=5000           # warn above this size
+SECRET_RE='(^|/)(\.env|\.envrc|id_[rd]sa|.*\.pem|.*\.p12|.*\.keystore|credentials|.*secret.*|.*\.key)$'
+
+usage() {
+  cat <<'USAGE'
+Usage: ship [options]
+
+  -m, --message TEXT   use TEXT as the commit subject (skips Claude)
+  -y, --yes            don't ask for confirmation
+  -n, --dry-run        show what would happen; touches nothing
+  -w, --wait           block until the PR merges, then pull and clean up
+      --timeout SECS   how long --wait waits before giving up (default 900)
+      --no-merge       don't enable auto-merge on the PR
+      --draft          open the PR as a draft (implies --no-merge)
+  -h, --help           this text
+USAGE
+}
+
+die()  { printf 'ship: %s\n' "$*" >&2; exit 1; }
+note() { printf 'ship: %s\n' "$*" >&2; }
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    -m|--message) MSG="${2:-}"; [ -n "$MSG" ] || die "-m needs a value"; shift 2 ;;
+    -y|--yes)     ASSUME_YES=1; shift ;;
+    -n|--dry-run) DRY_RUN=1; shift ;;
+    -w|--wait)    WAIT=1; shift ;;
+    --timeout)    TIMEOUT="${2:-}"; shift 2 ;;
+    --no-merge)   AUTO_MERGE=0; shift ;;
+    --draft)      DRAFT="--draft"; AUTO_MERGE=0; shift ;;
+    -h|--help)    usage; exit 0 ;;
+    *)            usage >&2; die "unknown option: $1" ;;
+  esac
+done
+
+# ---------------------------------------------------------------- preflight
+command -v git >/dev/null || die "git not found in PATH"
+[ "$DRY_RUN" -eq 1 ] || command -v gh >/dev/null || die "gh not found in PATH"
+if [ -z "$MSG" ] && [ "$DRY_RUN" -eq 0 ]; then
+  command -v claude >/dev/null || die "claude not found; pass -m instead"
+fi
+
+git rev-parse --git-dir >/dev/null 2>&1 || die "not inside a git repository"
+
+BASE="$(git symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/null | sed 's|^origin/||' || true)"
+[ -n "$BASE" ] || BASE=main
+git show-ref --verify --quiet "refs/heads/$BASE" \
+  || die "base branch '$BASE' not found locally (try: git remote set-head origin -a)"
+
+CURRENT="$(git rev-parse --abbrev-ref HEAD)"
+
+[ -n "$(git status --porcelain -uall)" ] || die "working tree is clean, nothing to ship"
+
+# ------------------------------------------------------------------- review
+echo
+git -c color.status=always status --short -uall
+echo
+git --no-pager diff --stat HEAD || true
+echo
+
+# warn about things that probably shouldn't be in a public PR
+while IFS= read -r f; do
+  [ -n "$f" ] || continue
+  if printf '%s' "$f" | grep -Eqi "$SECRET_RE"; then
+    note "WARNING: '$f' looks like a secret"
+  fi
+  if [ -f "$f" ]; then
+    kb=$(( $(wc -c <"$f") / 1024 ))
+    [ "$kb" -gt "$BIG_FILE_KB" ] && note "WARNING: '$f' is ${kb}KB"
+  fi
+done < <(git status --porcelain -uall | sed 's/^...//' | sed 's/.* -> //' | tr -d '"')
+
+if [ "$CURRENT" = "$BASE" ]; then
+  note "on '$BASE' — a new branch will be created"
+else
+  note "on '$CURRENT' — commit will land here"
+fi
+
+if [ "$DRY_RUN" -eq 1 ]; then
+  echo
+  note "DRY RUN — nothing staged, committed or pushed"
+  note "base branch:    $BASE"
+  note "commit message: ${MSG:-<Claude would write it>}"
+  note "auto-merge:     $([ "$AUTO_MERGE" -eq 1 ] && echo yes || echo no)"
+  note "wait for merge: $([ "$WAIT" -eq 1 ] && echo "yes (${TIMEOUT}s)" || echo no)"
+  exit 0
+fi
+
+if [ "$ASSUME_YES" -eq 0 ]; then
+  printf 'ship all of the above? [y/N] ' >&2
+  read -r reply
+  case "$reply" in y|Y|yes|YES) ;; *) die "aborted; nothing changed" ;; esac
+fi
+
+# -------------------------------------------------------------------- stage
+git add -A
+git diff --cached --quiet && die "nothing staged after add"
+
+# ------------------------------------------------------------------ message
+if [ -z "$MSG" ]; then
+  note "asking Claude for a commit message..."
+  MSG="$(git diff --cached | head -c "$DIFF_LIMIT" | claude -p \
+    'Write one conventional-commit subject line under 72 characters for this staged diff. Output only that line: no quotes, no backticks, no explanation.' \
+    | head -n1 | sed 's/^["'"'"'`]//; s/["'"'"'`]$//' | cut -c1-72)"
+fi
+[ -n "$MSG" ] || die "empty commit message; staged changes are intact, retry with -m"
+
+# ------------------------------------------------------------------- branch
+if [ "$CURRENT" = "$BASE" ]; then
+  SLUG="$(printf '%s' "$MSG" | tr '[:upper:]' '[:lower:]' \
+    | sed 's/[^a-z0-9]\+/-/g; s/^-//; s/-$//' | cut -c1-40 | sed 's/-$//')"
+  [ -n "$SLUG" ] || SLUG=change
+  BRANCH="auto/${SLUG}-$(date +%m%d-%H%M%S)"
+  git switch -c "$BRANCH"        # working tree comes along; nothing is stashed
+  git add -A
+else
+  BRANCH="$CURRENT"
+fi
+
+git commit -q -m "$MSG"
+note "committed: $MSG"
+
+if ! git push -q -u origin "$BRANCH"; then
+  die "push failed; commit is safe on local branch '$BRANCH'"
+fi
+
+# ---------------------------------------------------------------- pr + merge
+BODY=""
+if command -v claude >/dev/null; then
+  note "asking Claude for a PR description..."
+  BODY="$(git log "$BASE..$BRANCH" --patch | head -c "$DIFF_LIMIT" | claude -p \
+    'Write a pull request description in Markdown: a two-sentence summary, then a bullet list of the changes. Output only the description.' || true)"
+fi
+[ -n "$BODY" ] || BODY="$MSG"
+
+# shellcheck disable=SC2086
+URL="$(gh pr create --base "$BASE" --head "$BRANCH" --title "$MSG" --body "$BODY" $DRAFT)"
+echo "$URL"
+
+MERGED_NOW=0
+if [ "$AUTO_MERGE" -eq 1 ]; then
+  if gh pr merge --auto --squash "$URL" >/dev/null 2>&1; then
+    note "auto-merge enabled; PR merges when requirements pass"
+  # auto-merge can only be armed while something blocks the merge; with no
+  # branch protection the PR is already mergeable, so just merge it now
+  elif gh pr merge --squash --delete-branch "$URL" >/dev/null 2>&1; then
+    note "no merge requirements to wait for; merged immediately"
+    MERGED_NOW=1
+  else
+    note "could not merge: checks pending, conflicts, or missing permissions"
+  fi
+fi
+
+# ------------------------------------------------------------- wait & sync
+sync_base() {
+  git switch -q "$BASE"
+  git pull --ff-only -q || note "pull was not a fast-forward; run 'git pull' by hand"
+  git fetch -pq
+  # squash-merges leave the branch looking unmerged, so key off the deleted remote
+  if [ "$BRANCH" != "$BASE" ] && git show-ref --verify --quiet "refs/heads/$BRANCH"; then
+    if ! git ls-remote --exit-code --heads origin "$BRANCH" >/dev/null 2>&1; then
+      git branch -D "$BRANCH" >/dev/null 2>&1 && note "deleted local '$BRANCH'"
+    fi
+  fi
+  note "'$BASE' is up to date at $(git rev-parse --short HEAD)"
+}
+
+if [ "$MERGED_NOW" -eq 1 ]; then
+  sync_base
+elif [ "$WAIT" -eq 1 ]; then
+  note "waiting up to ${TIMEOUT}s for the PR to merge (Ctrl-C is safe)..."
+  deadline=$(( $(date +%s) + TIMEOUT ))
+  state=""
+  while :; do
+    state="$(gh pr view "$URL" --json state -q .state 2>/dev/null || echo UNKNOWN)"
+    case "$state" in
+      MERGED) note "PR merged"; break ;;
+      CLOSED) note "PR was closed without merging; leaving '$BRANCH' alone"; exit 1 ;;
+    esac
+    if [ "$(date +%s)" -ge "$deadline" ]; then
+      note "still $state after ${TIMEOUT}s — giving up on waiting"
+      note "finish with: gh pr checks --watch && git switch $BASE && git pull --ff-only"
+      exit 1
+    fi
+    sleep "$POLL"
+  done
+  sync_base
+else
+  [ "$CURRENT" = "$BASE" ] && git switch -q "$BASE"
+  note "not merged yet; run 'git pull --ff-only' once the PR lands"
+fi
+exit 0
