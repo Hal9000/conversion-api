@@ -117,6 +117,22 @@ Hash-based identity fields may be stored and processed only after their
 normalization, consent, permitted-purpose, access-control, and retention
 rules are defined. They are not an attribution fallback in V0.
 
+## Local testing
+
+Tests run against a disposable PostgreSQL database:
+
+```bash
+docker compose -f docker-compose.test.yml up -d
+export DATABASE_URL=postgres://postgres:postgres@127.0.0.1:54329/ecapi_test
+bundle install
+bundle exec rake test
+docker compose -f docker-compose.test.yml down -v
+```
+
+The test suite applies the production migrations before running and deletes
+test rows between cases. Do not point `DATABASE_URL` at a shared, development,
+or production database when running tests.
+
 ## Delivery order
 
 1. Define database migrations and the advertiser credential model.
