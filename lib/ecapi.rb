@@ -10,6 +10,18 @@ require "securerandom"
 require "time"
 
 module Ecapi
+  class DatabaseConfigurationError < StandardError; end
+
+  class DatabaseUrl
+    def self.fetch
+      database_url = ENV.fetch("DATABASE_URL")
+      return database_url unless ENV["RACK_ENV"] == "production"
+      return database_url if database_url.match?(/(?:\?|&)sslmode=verify-full(?:&|\z)/)
+
+      raise DatabaseConfigurationError, "production DATABASE_URL must set sslmode=verify-full"
+    end
+  end
+
   class ValidationError < StandardError
     attr_reader :errors
 
@@ -44,8 +56,14 @@ module Ecapi
   end
 
   class Repository
-    def initialize(database_url = ENV.fetch("DATABASE_URL"))
+    def initialize(database_url = DatabaseUrl.fetch)
       @db = Sequel.connect(database_url)
+    end
+
+    def healthy?
+      @db.get(Sequel.lit("1")) == 1
+    rescue Sequel::Error
+      false
     end
 
     def authenticate(token)
@@ -158,7 +176,12 @@ module Ecapi
 
     route do |r|
       r.get "health" do
-        { status: "ok" }
+        repository = Repository.new
+        App.halt_json(r, 503, "Service Unavailable") unless repository.healthy?
+
+        { status: "ok", database: "ok" }
+      rescue DatabaseConfigurationError, Sequel::Error
+        App.halt_json(r, 503, "Service Unavailable")
       end
 
       r.on "v1" do

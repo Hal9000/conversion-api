@@ -141,6 +141,23 @@ Pull requests run the same suite against an ephemeral PostgreSQL 16 GitHub
 Actions service container. CI does not require a database to be running in a
 Cloud Agent.
 
+## Deployment
+
+Build and run the receiver with the included container image:
+
+```bash
+docker build -t ecapi .
+docker run --rm --publish 9292:9292 \
+  --env RACK_ENV=production \
+  --env DATABASE_URL='postgres://.../?sslmode=verify-full' \
+  ecapi
+```
+
+The application runs Puma on `PORT` (default `9292`). In production,
+`DATABASE_URL` must use PostgreSQL certificate verification
+(`sslmode=verify-full`); startup fails otherwise. `GET /health` returns `200`
+only when the database accepts a query, otherwise it returns `503`.
+
 ## Delivery order
 
 1. Define database migrations and the advertiser credential model.

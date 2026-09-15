@@ -12,3 +12,5 @@ group :test do
   gem "minitest"
   gem "rack-test"
 end
+
+gem "puma", "~> 8.0"
