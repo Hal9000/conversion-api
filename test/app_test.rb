@@ -65,6 +65,26 @@ class EventReceiverTest < ApiTest
     assert_equal 0, database[Sequel.qualify(:ecapi, :events)].count
   end
 
+  def test_rejects_an_invalid_batch_without_persisting_any_events
+    post_event([
+      purchase("id" => "order_valid"),
+      purchase("id" => "order_invalid", "currency_code" => nil)
+    ])
+
+    assert_equal 400, last_response.status
+    details = JSON.parse(last_response.body).fetch("details")
+    assert_equal({ "index" => 1, "error" => "purchase requires a three-letter currency_code" }, details.first)
+    assert_equal 0, database[Sequel.qualify(:ecapi, :events)].count
+    assert_equal 0, database[Sequel.qualify(:ecapi, :event_receipts)].count
+  end
+
+  def test_rejects_a_request_larger_than_one_megabyte
+    post_event(purchase("properties" => { "padding" => "x" * Ecapi::App::MAX_REQUEST_BYTES }))
+
+    assert_equal 413, last_response.status
+    assert_equal 0, database[Sequel.qualify(:ecapi, :events)].count
+  end
+
   def test_records_a_retry_without_creating_a_second_event
     post_event(purchase)
     post_event(purchase)
